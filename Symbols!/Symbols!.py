@@ -1,127 +1,136 @@
 import pygame
-import unicodedataplus as ud
-import time
 import sys
+import time
+import random
+import unicodedataplus as ud
+
+import pygame
+import sys
+import time
+import random
 import webbrowser
-import os
+import unicodedataplus as ud
 
 # -------------------- INIT --------------------
 pygame.init()
+TEMP_FONT = pygame.font.SysFont(None, 36)
+TEMP_SMALL_FONT = pygame.font.SysFont(None, 24)
 WIDTH, HEIGHT = 900, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Symbols!")
-
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-GRAY = (200, 200, 200)
-RED = (200, 0, 0)
-GREEN = (0, 160, 0)
-
 clock = pygame.time.Clock()
 
-# ---- SAFE FALLBACK FONTS (CRITICAL FIX) ----
-FONT = pygame.font.SysFont(None, 36)
-SMALL_FONT = pygame.font.SysFont(None, 26)
+# -------------------- COLORS --------------------
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+BLUE = (40, 120, 255)
+RED = (255, 80, 80)
+GRAY = (160, 160, 160)
 
-def load_noto_font():
-    global FONT, SMALL_FONT
-    if os.path.exists("NotoSans-VariableFont_wdth,wght.ttf"):
+# -------------------- FONT LOADING --------------------
+FONT = None
+SMALL_FONT = None
+BIG_FONT = None
+FALLBACK_FONTS = []
+
+def load_fonts():
+    global FONT, SMALL_FONT, BIG_FONT, FALLBACK_FONTS
+    try:
         FONT = pygame.font.Font("NotoSans-VariableFont_wdth,wght.ttf", 36)
-        SMALL_FONT = pygame.font.Font("NotoSans-VariableFont_wdth,wght.ttf", 26)
+        SMALL_FONT = pygame.font.Font("NotoSans-VariableFont_wdth,wght.ttf", 24)
+        BIG_FONT = pygame.font.Font("NotoSans-VariableFont_wdth,wght.ttf", 72)
+    except:
+        FONT = pygame.font.SysFont(None, 36)
+        SMALL_FONT = pygame.font.SysFont(None, 24)
+        BIG_FONT = pygame.font.SysFont(None, 72)
 
-# -------------------- STATE --------------------
-current_screen = "STARTER"
-tutorial_step = 0
-input_text = ""
-output_text = ""
-exit_start = None
-live_valid = None
+    FALLBACK_FONTS = [
+        BIG_FONT,
+        pygame.font.SysFont("Segoe UI Symbol", 72),
+        pygame.font.SysFont("Arial Unicode MS", 72),
+        pygame.font.SysFont(None, 72),
+    ]
 
 # -------------------- DRAW HELPERS --------------------
-def draw_text(text, x, y, font=FONT, color=BLACK, center=False):
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
+def draw_text(text, x, y, font, color=WHITE, center=True):
+    for i, line in enumerate(text.split("\n")):
         surf = font.render(line, True, color)
-        rect = surf.get_rect()
-        if center:
-            rect.center = (x, y + i * 34)
-        else:
-            rect.topleft = (x, y + i * 34)
+        rect = surf.get_rect(center=(x, y + i * 40)) if center else surf.get_rect(topleft=(x, y + i * 40))
         screen.blit(surf, rect)
 
-def draw_button(rect, text):
-    pygame.draw.rect(screen, GRAY, rect)
-    pygame.draw.rect(screen, BLACK, rect, 2)
-    draw_text(text, rect.centerx, rect.centery - 16, center=True)
+def draw_button(rect, text, font=None):
+    pygame.draw.rect(screen, BLUE, rect, border_radius=10)
+    pygame.draw.rect(screen, WHITE, rect, 2, border_radius=10)
+
+    if font is None:
+        font = TEMP_SMALL_FONT if SMALL_FONT is None else SMALL_FONT
+
+    draw_text(text, rect.centerx, rect.centery, font)
+
+
+def render_symbol_safe(char):
+    for f in FALLBACK_FONTS:
+        try:
+            surf = f.render(char, True, WHITE)
+            if surf.get_width() > 0:
+                return surf
+        except:
+            pass
+    return BIG_FONT.render("□", True, RED)
 
 # -------------------- UNICODE LOGIC --------------------
 def get_char_info(ch):
     try:
         name = ud.name(ch)
-    except ValueError:
+    except:
         name = "No official Unicode name"
-    cp = f"U+{ord(ch):04X}"
-    age = ud.age(ch)
-    ver = f"{age[0]}.{age[1]}" if age else "Unknown"
-    return f"Symbol: {ch}\nName: {name}\nCodepoint: {cp}\nUnicode version: {ver}"
+    return f"Symbol: {ch}\nName: {name}\nCodepoint: U+{ord(ch):04X}"
 
-def parse_u_input(text):
+# -------------------- STATES --------------------
+state = "START"
+input_text = ""
+output_text = ""
+
+# -------------------- MINIGAME DATA --------------------
+DIFFICULTIES = {
+    "Easy": list("!;:()*&^-%$#@/"),
+    "Medium": list("{}[]\\/_abcdefABCDEFG~`"),
+    "Hard": ['"', "'", "ą", "ź", "<", ">", "|", "+", "=", "Æ", "æ", "§"],
+    "Insane": ["★", "𖤐", "Δ", "𝞭", "λ", "〠", "ε", "Ξ"],
+}
+
+KNOWN = set(ch for v in DIFFICULTIES.values() for ch in v)
+IMPOSSIBLE = []
+for cp in range(0x21, 0x10FFFF):
     try:
-        cp = int(text[2:], 16)
-        if cp < 0x20 or cp == 0x7F:
-            return "Control characters cannot be displayed."
-        if cp > 0x10FFFF:
-            return "Invalid Unicode codepoint."
-        return get_char_info(chr(cp))
-    except ValueError:
-        return "Invalid codepoint."
+        ch = chr(cp)
+        if ch not in KNOWN:
+            ud.name(ch)
+            IMPOSSIBLE.append(ch)
+    except:
+        continue
 
-def find_extreme(longest=True):
-    best_len = 0 if longest else 9999
-    best = None
-    for cp in range(0x110000):
-        try:
-            ch = chr(cp)
-            name = ud.name(ch)
-            ln = len(name)
-            if (longest and ln > best_len) or (not longest and ln < best_len):
-                best_len = ln
-                best = get_char_info(ch)
-        except ValueError:
-            continue
-    return best
+DIFFICULTIES["Impossible"] = IMPOSSIBLE
 
-def find_by_name(query):
-    query = query.upper()
-    for cp in range(0x110000):
-        try:
-            ch = chr(cp)
-            if ud.name(ch) == query:
-                return get_char_info(ch)
-        except ValueError:
-            continue
-    return "No character with that exact name found."
+mg_symbol = ""
+mg_answer = ""
+mg_diff = ""
+mg_correct = False
+mg_correct_time = 0
 
-# -------------------- LIVE VALIDATION --------------------
-def update_live_validation(text):
-    if not text:
-        return None
-    if text.lower() in ("longest", "shortest", "exit"):
-        return True
-    if text.upper().startswith("U+"):
-        try:
-            cp = int(text[2:], 16)
-            return 0x20 <= cp <= 0x10FFFF and cp != 0x7F
-        except ValueError:
-            return False
-    if len(text) == 1:
-        return True
-    return True
+def new_symbol():
+    global mg_symbol, mg_answer, mg_correct
+    mg_symbol = random.choice(DIFFICULTIES[mg_diff])
+    try:
+        mg_answer = ud.name(mg_symbol)
+    except:
+        mg_answer = ""
+    mg_correct = False
 
 # -------------------- MAIN LOOP --------------------
 running = True
 while running:
-    screen.fill(WHITE)
+    screen.fill(BLACK)
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -129,123 +138,111 @@ while running:
             sys.exit()
 
         if event.type == pygame.KEYDOWN:
-            if current_screen in ("SYMBOLS", "TUTORIAL"):
+            if state in ("SYMBOLS", "MINIGAME_PLAY"):
                 if event.key == pygame.K_BACKSPACE:
                     input_text = input_text[:-1]
+
                 elif event.key == pygame.K_RETURN:
                     text = input_text.strip()
 
-                    if current_screen == "TUTORIAL":
-                        if tutorial_step == 0 and text.lower() == "longest":
-                            output_text = find_extreme(True)
-                            tutorial_step = 1
-                        elif tutorial_step == 1 and text.lower() == "shortest":
-                            output_text = find_extreme(False)
-                            tutorial_step = 2
-                        elif tutorial_step == 2 and text.lower() == "exit":
-                            exit_start = time.time()
-                            current_screen = "EXIT"
-                        else:
-                            output_text = "Please type the requested word."
-                    else:
-                        if text.lower() == "longest":
-                            output_text = find_extreme(True)
-                        elif text.lower() == "shortest":
-                            output_text = find_extreme(False)
-                        elif text.lower() == "exit":
-                            exit_start = time.time()
-                            current_screen = "EXIT"
-                        elif text.upper().startswith("U+"):
-                            output_text = parse_u_input(text)
-                        elif len(text) == 1:
+                    if state == "SYMBOLS":
+                        if len(text) == 1:
                             output_text = get_char_info(text)
                         else:
-                            output_text = find_by_name(text)
+                            output_text = "Enter exactly one character."
+
+                    elif state == "MINIGAME_PLAY" and not mg_correct:
+                        if text.upper() == mg_answer:
+                            output_text = "Correct!"
+                            mg_correct = True
+                            mg_correct_time = time.time()
 
                     input_text = ""
-                    live_valid = None
 
                 else:
                     input_text += event.unicode
-                    live_valid = update_live_validation(input_text)
 
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if current_screen == "STARTER":
+            if state == "START":
                 if start_btn.collidepoint(event.pos):
-                    load_noto_font()
-                    current_screen = "HOME"
+                    load_fonts()
+                    state = "HOME"
                 if noto_btn.collidepoint(event.pos):
                     webbrowser.open("https://fonts.google.com/noto/specimen/Noto+Sans")
 
-            elif current_screen == "HOME":
+            elif state == "HOME":
                 if sym_btn.collidepoint(event.pos):
-                    current_screen = "SYMBOLS"
-                if tut_btn.collidepoint(event.pos):
-                    current_screen = "TUTORIAL"
-                    tutorial_step = 0
-                    input_text = ""
-                    output_text = ""
+                    state = "SYMBOLS"
+                if mg_btn.collidepoint(event.pos):
+                    state = "MINIGAMES"
 
-            elif current_screen == "TUTORIAL" and tutorial_step == 3:
-                if ok_btn.collidepoint(event.pos):
-                    current_screen = "HOME"
+            elif state == "MINIGAMES":
+                for d, r in diff_buttons.items():
+                    if r.collidepoint(event.pos):
+                        mg_diff = d
+                        new_symbol()
+                        output_text = ""
+                        state = "MINIGAME_PLAY"
+
+            elif state in ("SYMBOLS", "MINIGAME_PLAY"):
+                if back_btn.collidepoint(event.pos):
+                    state = "HOME"
 
     # -------------------- DRAW --------------------
-    if current_screen == "STARTER":
+    if state == "START":
         draw_text(
-            'print("WARNING!!! WARNING!!!")\n'
-            'print("pip install pygame unicodedataplus")\n'
-            'print("AND INSTALL NOTO SANS")',
-            WIDTH // 2, 120, center=True
+            "WARNING!!! WARNING!!!\n\n"
+            "This script requires:\n"
+            "pip install pygame unicodedataplus\n\n"
+            "You must also install Noto Sans\n"
+            "(recommended for symbol support)",
+            WIDTH // 2, 150, pygame.font.SysFont(None, 26)
         )
-        start_btn = pygame.Rect(350, 300, 200, 60)
-        noto_btn = pygame.Rect(250, 380, 400, 60)
+        start_btn = pygame.Rect(350, 400, 200, 50)
+        noto_btn = pygame.Rect(300, 470, 300, 40)
         draw_button(start_btn, "Start")
-        draw_button(noto_btn, "Open Noto Sans Download Page")
+        draw_button(noto_btn, "Open Noto Sans Download")
 
-    elif current_screen == "HOME":
-        draw_text("Symbols!", WIDTH // 2, 100, center=True)
-        sym_btn = pygame.Rect(350, 250, 200, 60)
-        tut_btn = pygame.Rect(350, 330, 200, 60)
+    elif state == "HOME":
+        draw_text("Symbols!", WIDTH // 2, 120, FONT)
+        sym_btn = pygame.Rect(350, 240, 200, 60)
+        mg_btn = pygame.Rect(350, 320, 200, 60)
         draw_button(sym_btn, "Symbols")
-        draw_button(tut_btn, "Tutorial")
+        draw_button(mg_btn, "Minigames")
 
-    elif current_screen == "SYMBOLS":
-        draw_text("Enter input here:", 30, 200)
-        pygame.draw.rect(screen, BLACK, (30, 240, 840, 40), 2)
-        draw_text(input_text, 40, 250)
+    elif state == "SYMBOLS":
+        back_btn = pygame.Rect(20, 20, 100, 40)
+        draw_button(back_btn, "Back")
+        draw_text("Enter one character:", WIDTH // 2, 140, SMALL_FONT)
+        pygame.draw.rect(screen, WHITE, (200, 180, 500, 40), 2)
+        draw_text(input_text, WIDTH // 2, 200, SMALL_FONT)
+        draw_text(output_text, WIDTH // 2, 280, SMALL_FONT)
 
-        if live_valid is not None:
-            icon = "✔️" if live_valid else "❌"
-            color = GREEN if live_valid else RED
-            draw_text(icon, 850, 245, SMALL_FONT, color)
+    elif state == "MINIGAMES":
+        draw_text("Guess the symbol's name!", WIDTH // 2, 120, FONT)
+        diff_buttons = {}
+        y = 200
+        for d in DIFFICULTIES:
+            r = pygame.Rect(300, y, 300, 45)
+            draw_button(r, d)
+            diff_buttons[d] = r
+            y += 55
 
-        draw_text(output_text, 30, 310, SMALL_FONT)
+    elif state == "MINIGAME_PLAY":
+        back_btn = pygame.Rect(20, 20, 100, 40)
+        draw_button(back_btn, "Back")
 
-    elif current_screen == "TUTORIAL":
-        steps = [
-            'Type "Longest"',
-            'Now type "Shortest"',
-            'Now type "Exit"',
-            'Tutorial complete!'
-        ]
-        draw_text(steps[tutorial_step], WIDTH // 2, 120, center=True)
+        draw_text("Symbol:", WIDTH // 2, 90, SMALL_FONT)
+        surf = render_symbol_safe(mg_symbol)
+        screen.blit(surf, surf.get_rect(center=(WIDTH // 2, 150)))
 
-        if tutorial_step < 3:
-            draw_text("Enter input here:", 30, 240)
-            pygame.draw.rect(screen, BLACK, (30, 280, 840, 40), 2)
-            draw_text(input_text, 40, 290)
-        else:
-            ok_btn = pygame.Rect(400, 350, 100, 50)
-            draw_button(ok_btn, "OK")
+        pygame.draw.rect(screen, WHITE, (200, 240, 500, 40), 2)
+        draw_text(input_text, WIDTH // 2, 260, SMALL_FONT)
+        draw_text(output_text, WIDTH // 2, 320, SMALL_FONT)
 
-    elif current_screen == "EXIT":
-        elapsed = time.time() - exit_start
-        dots = "." * (int(elapsed * 2) % 3 + 1)
-        draw_text(dots, WIDTH // 2, HEIGHT // 2, center=True)
-        if elapsed >= 1.5:
-            pygame.quit()
-            sys.exit()
+        if mg_correct and time.time() - mg_correct_time > 2:
+            output_text = ""
+            new_symbol()
 
     pygame.display.flip()
     clock.tick(60)
